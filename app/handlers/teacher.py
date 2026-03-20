@@ -4,6 +4,9 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from app.keyboards import (
+    build_delete_confirmation_keyboard,
+    build_delete_students_keyboard,
+    build_restore_students_keyboard,
     build_students_keyboard,
     build_submission_assignments_keyboard,
     build_submission_students_keyboard,
@@ -12,17 +15,23 @@ from app.keyboards import (
 )
 from app.services.access import is_teacher
 from app.services.files import send_file_by_type, send_submission_files
+from app.services.pdf_reports import build_teacher_grades_pdf
 from app.states import AssignmentStates, GradingStates
 from database import (
     create_assignment,
+    delete_student,
+    get_all_inactive_students,
     get_all_students,
+    get_all_graded_results,
     get_assignment_by_id,
+    get_inactive_student_by_id,
     get_student_assignment_number,
     get_student_by_id,
     get_submission_by_id,
     get_submission_files,
     get_ungraded_submissions,
     grade_submission,
+    restore_student,
 )
 
 
@@ -48,6 +57,24 @@ async def students_handler(message: Message) -> None:
     await message.answer("\n".join(lines), reply_markup=get_teacher_menu())
 
 
+@router.message(Command("delete_student"))
+@router.message(F.text == "Удалить ученика")
+async def delete_student_menu_handler(message: Message) -> None:
+    if not is_teacher(message.from_user.id):
+        await message.answer("Эта функция доступна только преподавателю.")
+        return
+
+    students = await get_all_students()
+    if not students:
+        await message.answer("Пока ни один ученик не зарегистрирован.")
+        return
+
+    await message.answer(
+        "Выберите ученика, которого нужно удалить:",
+        reply_markup=build_delete_students_keyboard(students),
+    )
+
+
 @router.message(Command("new_assignment"))
 @router.message(F.text == "Новое задание")
 async def new_assignment_handler(message: Message, state: FSMContext) -> None:
@@ -64,6 +91,24 @@ async def new_assignment_handler(message: Message, state: FSMContext) -> None:
     await message.answer(
         "Выберите ученика, которому хотите выдать задание:",
         reply_markup=build_students_keyboard(students),
+    )
+
+
+@router.message(Command("restore_student"))
+@router.message(F.text == "Восстановить ученика")
+async def restore_student_menu_handler(message: Message) -> None:
+    if not is_teacher(message.from_user.id):
+        await message.answer("Эта функция доступна только преподавателю.")
+        return
+
+    students = await get_all_inactive_students()
+    if not students:
+        await message.answer("Нет деактивированных учеников.", reply_markup=get_teacher_menu())
+        return
+
+    await message.answer(
+        "Выберите ученика, которого нужно восстановить:",
+        reply_markup=build_restore_students_keyboard(students),
     )
 
 
@@ -84,6 +129,80 @@ async def select_student_handler(callback: CallbackQuery, state: FSMContext) -> 
     await callback.message.answer(
         f"Вы выбрали ученика: {student['full_name']}\n\n"
         "Теперь введите название задания."
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("delete_student:"))
+async def delete_student_handler(callback: CallbackQuery) -> None:
+    if not is_teacher(callback.from_user.id):
+        await callback.answer("Недостаточно прав", show_alert=True)
+        return
+
+    student_id = int(callback.data.split(":")[1])
+    student = await get_student_by_id(student_id)
+    if not student:
+        await callback.answer("Ученик не найден", show_alert=True)
+        return
+
+    await callback.message.answer(
+        f"Удалить ученика {student['full_name']} ({student['school_class']})?\n"
+        "Ученик будет деактивирован и исчезнет из активных списков, но его данные останутся в базе.",
+        reply_markup=build_delete_confirmation_keyboard(student_id),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("confirm_delete_student:"))
+async def confirm_delete_student_handler(callback: CallbackQuery) -> None:
+    if not is_teacher(callback.from_user.id):
+        await callback.answer("Недостаточно прав", show_alert=True)
+        return
+
+    student_id = int(callback.data.split(":")[1])
+    student = await get_student_by_id(student_id)
+    if not student:
+        await callback.answer("Ученик уже удалён", show_alert=True)
+        return
+
+    student_name = student["full_name"]
+    await delete_student(student_id)
+    await callback.message.answer(
+        f"Ученик {student_name} деактивирован.",
+        reply_markup=get_teacher_menu(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "cancel_delete_student")
+async def cancel_delete_student_handler(callback: CallbackQuery) -> None:
+    if not is_teacher(callback.from_user.id):
+        await callback.answer("Недостаточно прав", show_alert=True)
+        return
+
+    await callback.message.answer(
+        "Удаление ученика отменено.",
+        reply_markup=get_teacher_menu(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("restore_student:"))
+async def restore_student_handler(callback: CallbackQuery) -> None:
+    if not is_teacher(callback.from_user.id):
+        await callback.answer("Недостаточно прав", show_alert=True)
+        return
+
+    student_id = int(callback.data.split(":")[1])
+    student = await get_inactive_student_by_id(student_id)
+    if not student:
+        await callback.answer("Ученик не найден или уже восстановлен", show_alert=True)
+        return
+
+    await restore_student(student_id)
+    await callback.message.answer(
+        f"Ученик {student['full_name']} восстановлен.",
+        reply_markup=get_teacher_menu(),
     )
     await callback.answer()
 
@@ -202,6 +321,65 @@ async def submissions_handler(message: Message) -> None:
     await message.answer(
         "Выберите ученика:",
         reply_markup=build_submission_students_keyboard(submissions),
+    )
+
+
+@router.message(Command("grades_report"))
+@router.message(F.text == "Таблица оценок")
+async def grades_report_handler(message: Message) -> None:
+    if not is_teacher(message.from_user.id):
+        await message.answer("Эта функция доступна только преподавателю.")
+        return
+
+    graded_results = await get_all_graded_results()
+    if not graded_results:
+        await message.answer(
+            "Пока нет проверенных работ с оценками.",
+            reply_markup=get_teacher_menu(),
+        )
+        return
+
+    student_results: dict[str, list[tuple[str, str]]] = {}
+    for result in graded_results:
+        student_label = f"{result['student_full_name']} ({result['school_class']})"
+        assignment_label = f"{result['assignment_number']} ({result['assignment_title']})"
+
+        if student_label not in student_results:
+            student_results[student_label] = []
+
+        student_results[student_label].append(
+            (
+                assignment_label,
+                str(result["grade"]),
+            )
+        )
+
+    student_labels = list(student_results.keys())
+    max_assignments = max(len(items) for items in student_results.values())
+
+    rows = [["", *student_labels]]
+    for index in range(max_assignments):
+        assignment_row = [f"ДЗ {index + 1}"]
+        grade_row = [f"Оценка {index + 1}"]
+
+        for student_label in student_labels:
+            student_items = student_results[student_label]
+            if index < len(student_items):
+                assignment_label, grade = student_items[index]
+                assignment_row.append(assignment_label)
+                grade_row.append(grade)
+            else:
+                assignment_row.append("")
+                grade_row.append("")
+
+        rows.append(assignment_row)
+        rows.append(grade_row)
+
+    pdf_file = build_teacher_grades_pdf(rows)
+    await message.answer_document(
+        pdf_file,
+        caption="Вот общая таблица оценок в PDF.",
+        reply_markup=get_teacher_menu(),
     )
 
 

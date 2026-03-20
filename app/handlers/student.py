@@ -11,12 +11,14 @@ from app.keyboards import (
 )
 from app.services.access import is_teacher
 from app.services.files import send_file_by_type
+from app.services.pdf_reports import build_student_grades_pdf
 from app.states import SubmissionStates
 from database import (
     add_submission_file,
     create_submission,
     get_assignment_by_id,
     get_assignments_for_student,
+    get_graded_results_for_student,
     get_latest_submission_for_assignment,
     get_student_assignment_number,
     get_user_by_telegram_id,
@@ -34,7 +36,7 @@ async def assignments_handler(message: Message) -> None:
         return
 
     user = await get_user_by_telegram_id(message.from_user.id)
-    if not user:
+    if not user or not user["is_active"]:
         await message.answer("Сначала пройдите регистрацию через /start")
         return
 
@@ -54,6 +56,42 @@ async def assignments_handler(message: Message) -> None:
     )
 
 
+@router.message(Command("grades"))
+@router.message(F.text == "Мои оценки")
+async def grades_report_handler(message: Message) -> None:
+    if is_teacher(message.from_user.id):
+        await message.answer("Эта функция предназначена для учеников.")
+        return
+
+    user = await get_user_by_telegram_id(message.from_user.id)
+    if not user or not user["is_active"]:
+        await message.answer("Сначала пройдите регистрацию через /start")
+        return
+
+    graded_results = await get_graded_results_for_student(user["id"])
+    if not graded_results:
+        await message.answer(
+            "У вас пока нет проверенных работ с оценками.",
+            reply_markup=get_student_menu(),
+        )
+        return
+
+    rows = [
+        [
+            str(result["assignment_number"]),
+            result["assignment_title"],
+            str(result["grade"]),
+        ]
+        for result in graded_results
+    ]
+    pdf_file = build_student_grades_pdf(user["full_name"], rows)
+    await message.answer_document(
+        pdf_file,
+        caption="Вот ваша таблица оценок в PDF.",
+        reply_markup=get_student_menu(),
+    )
+
+
 @router.callback_query(F.data.startswith("open_assignment:"))
 async def open_assignment_handler(callback: CallbackQuery, bot: Bot) -> None:
     if is_teacher(callback.from_user.id):
@@ -64,7 +102,7 @@ async def open_assignment_handler(callback: CallbackQuery, bot: Bot) -> None:
     assignment = await get_assignment_by_id(assignment_id)
     user = await get_user_by_telegram_id(callback.from_user.id)
 
-    if not assignment or not user or assignment["student_id"] != user["id"]:
+    if not assignment or not user or not user["is_active"] or assignment["student_id"] != user["id"]:
         await callback.answer("Задание не найдено", show_alert=True)
         return
 
@@ -105,7 +143,7 @@ async def submit_assignment_handler(callback: CallbackQuery, state: FSMContext) 
     assignment = await get_assignment_by_id(assignment_id)
     user = await get_user_by_telegram_id(callback.from_user.id)
 
-    if not assignment or not user or assignment["student_id"] != user["id"]:
+    if not assignment or not user or not user["is_active"] or assignment["student_id"] != user["id"]:
         await callback.answer("Задание не найдено", show_alert=True)
         return
 
@@ -172,7 +210,7 @@ async def finish_submission_handler(message: Message, state: FSMContext) -> None
         return
 
     user = await get_user_by_telegram_id(message.from_user.id)
-    if not user:
+    if not user or not user["is_active"]:
         await state.clear()
         await message.answer("Сначала пройдите регистрацию через /start")
         return
@@ -233,4 +271,3 @@ async def submission_wrong_file_handler(message: Message) -> None:
         "Пожалуйста, отправьте PDF документ, фотографию или нажмите 'Завершить отправку решения'.",
         reply_markup=get_submission_menu(),
     )
-

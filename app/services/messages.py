@@ -17,11 +17,12 @@ async def show_main_menu(message: Message, state: FSMContext) -> None:
         return
 
     user = await get_user_by_telegram_id(message.from_user.id)
-    if user:
+    if user and user["is_active"]:
         await message.answer(
             "Главное меню ученика.",
             reply_markup=get_student_menu(),
         )
+    elif user:
+        await message.answer("Ваш аккаунт деактивирован. Обратитесь к преподавателю.")
     else:
         await message.answer("Сначала пройдите регистрацию через /start")
-

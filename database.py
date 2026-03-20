@@ -55,10 +55,22 @@ async def init_db() -> None:
                 telegram_id INTEGER NOT NULL UNIQUE,
                 full_name TEXT NOT NULL,
                 school_class TEXT NOT NULL,
-                role TEXT NOT NULL DEFAULT 'student'
+                role TEXT NOT NULL DEFAULT 'student',
+                is_active INTEGER NOT NULL DEFAULT 1
             )
             """
         )
+        columns_cursor = await db.execute("PRAGMA table_info(users)")
+        columns = await columns_cursor.fetchall()
+        await columns_cursor.close()
+        column_names = {column["name"] for column in columns}
+        if "is_active" not in column_names:
+            await db.execute(
+                """
+                ALTER TABLE users
+                ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1
+                """
+            )
         await db.execute(
             """
             CREATE TABLE IF NOT EXISTS assignments (
@@ -107,7 +119,7 @@ async def init_db() -> None:
 async def get_user_by_telegram_id(telegram_id: int):
     return await fetch_one(
         """
-        SELECT id, telegram_id, full_name, school_class, role
+        SELECT id, telegram_id, full_name, school_class, role, is_active
         FROM users
         WHERE telegram_id = ?
         """,
@@ -123,8 +135,8 @@ async def create_user(
 ) -> None:
     await execute(
         """
-        INSERT INTO users (telegram_id, full_name, school_class, role)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO users (telegram_id, full_name, school_class, role, is_active)
+        VALUES (?, ?, ?, ?, 1)
         """,
         (telegram_id, full_name, school_class, role),
     )
@@ -133,9 +145,9 @@ async def create_user(
 async def get_all_students():
     return await fetch_all(
         """
-        SELECT id, telegram_id, full_name, school_class, role
+        SELECT id, telegram_id, full_name, school_class, role, is_active
         FROM users
-        WHERE role = 'student'
+        WHERE role = 'student' AND is_active = 1
         ORDER BY full_name
         """
     )
@@ -144,11 +156,33 @@ async def get_all_students():
 async def get_student_by_id(student_id: int):
     return await fetch_one(
         """
-        SELECT id, telegram_id, full_name, school_class, role
+        SELECT id, telegram_id, full_name, school_class, role, is_active
         FROM users
-        WHERE id = ? AND role = 'student'
+        WHERE id = ? AND role = 'student' AND is_active = 1
         """,
         (student_id,),
+    )
+
+
+async def get_inactive_student_by_id(student_id: int):
+    return await fetch_one(
+        """
+        SELECT id, telegram_id, full_name, school_class, role, is_active
+        FROM users
+        WHERE id = ? AND role = 'student' AND is_active = 0
+        """,
+        (student_id,),
+    )
+
+
+async def get_all_inactive_students():
+    return await fetch_all(
+        """
+        SELECT id, telegram_id, full_name, school_class, role, is_active
+        FROM users
+        WHERE role = 'student' AND is_active = 0
+        ORDER BY full_name
+        """
     )
 
 
@@ -286,7 +320,7 @@ async def get_ungraded_submissions():
         FROM submissions s
         JOIN users u ON u.id = s.student_id
         JOIN assignments a ON a.id = s.assignment_id
-        WHERE s.status = 'submitted'
+        WHERE s.status = 'submitted' AND u.is_active = 1
         ORDER BY s.id DESC
         """
     )
@@ -300,4 +334,70 @@ async def grade_submission(submission_id: int, grade: str, teacher_comment: str)
         WHERE id = ?
         """,
         (grade, teacher_comment, submission_id),
+    )
+
+
+async def get_graded_results_for_student(student_id: int):
+    return await fetch_all(
+        """
+        SELECT
+            a.id AS assignment_id,
+            (
+                SELECT COUNT(*)
+                FROM assignments a2
+                WHERE a2.student_id = a.student_id AND a2.id <= a.id
+            ) AS assignment_number,
+            a.title AS assignment_title,
+            s.grade
+        FROM submissions s
+        JOIN assignments a ON a.id = s.assignment_id
+        WHERE s.student_id = ? AND s.status = 'graded'
+        ORDER BY a.id ASC, s.id ASC
+        """,
+        (student_id,),
+    )
+
+
+async def get_all_graded_results():
+    return await fetch_all(
+        """
+        SELECT
+            u.full_name AS student_full_name,
+            u.school_class,
+            a.id AS assignment_id,
+            (
+                SELECT COUNT(*)
+                FROM assignments a2
+                WHERE a2.student_id = a.student_id AND a2.id <= a.id
+            ) AS assignment_number,
+            a.title AS assignment_title,
+            s.grade
+        FROM submissions s
+        JOIN assignments a ON a.id = s.assignment_id
+        JOIN users u ON u.id = s.student_id
+        WHERE s.status = 'graded' AND u.is_active = 1
+        ORDER BY u.full_name ASC, a.id ASC, s.id ASC
+        """
+    )
+
+
+async def delete_student(student_id: int) -> None:
+    await execute(
+        """
+        UPDATE users
+        SET is_active = 0
+        WHERE id = ? AND role = 'student'
+        """,
+        (student_id,),
+    )
+
+
+async def restore_student(student_id: int) -> None:
+    await execute(
+        """
+        UPDATE users
+        SET is_active = 1
+        WHERE id = ? AND role = 'student'
+        """,
+        (student_id,),
     )

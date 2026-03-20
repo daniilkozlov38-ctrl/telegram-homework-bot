@@ -34,9 +34,17 @@ async def start_handler(message: Message, state: FSMContext) -> None:
             "/students\n"
             "/new_assignment\n"
             "/submissions\n"
+            "/grades_report\n"
+            "/delete_student\n"
+            "/restore_student\n"
             "/menu",
             reply_markup=get_teacher_menu(),
         )
+        return
+
+    if existing_user and not existing_user["is_active"]:
+        await state.clear()
+        await message.answer("Ваш аккаунт деактивирован. Обратитесь к преподавателю.")
         return
 
     if existing_user:
@@ -46,6 +54,7 @@ async def start_handler(message: Message, state: FSMContext) -> None:
             f"Класс: {existing_user['school_class']}\n\n"
             "Можно пользоваться кнопками ниже или командами:\n"
             "/assignments\n"
+            "/grades\n"
             "/menu",
             reply_markup=get_student_menu(),
         )

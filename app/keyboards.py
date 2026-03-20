@@ -15,6 +15,13 @@ def get_teacher_menu() -> ReplyKeyboardMarkup:
             ],
             [
                 KeyboardButton(text="Непроверенные решения"),
+                KeyboardButton(text="Таблица оценок"),
+            ],
+            [
+                KeyboardButton(text="Удалить ученика"),
+                KeyboardButton(text="Восстановить ученика"),
+            ],
+            [
                 KeyboardButton(text="Назад в меню"),
             ],
         ],
@@ -27,6 +34,9 @@ def get_student_menu() -> ReplyKeyboardMarkup:
         keyboard=[
             [
                 KeyboardButton(text="Мои задания"),
+                KeyboardButton(text="Мои оценки"),
+            ],
+            [
                 KeyboardButton(text="Назад в меню"),
             ],
         ],
@@ -114,5 +124,48 @@ def build_submission_assignments_keyboard(student_submissions) -> InlineKeyboard
             )
         ]
         for submission, assignment_number in student_submissions
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def build_delete_students_keyboard(students) -> InlineKeyboardMarkup:
+    buttons = [
+        [
+            InlineKeyboardButton(
+                text=f"{student['full_name']} ({student['school_class']})",
+                callback_data=f"delete_student:{student['id']}",
+            )
+        ]
+        for student in students
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def build_delete_confirmation_keyboard(student_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Да, удалить",
+                    callback_data=f"confirm_delete_student:{student_id}",
+                ),
+                InlineKeyboardButton(
+                    text="Отмена",
+                    callback_data="cancel_delete_student",
+                ),
+            ]
+        ]
+    )
+
+
+def build_restore_students_keyboard(students) -> InlineKeyboardMarkup:
+    buttons = [
+        [
+            InlineKeyboardButton(
+                text=f"{student['full_name']} ({student['school_class']})",
+                callback_data=f"restore_student:{student['id']}",
+            )
+        ]
+        for student in students
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)

@@ -17,6 +17,9 @@ async def fallback_handler(message: Message) -> None:
             "/students\n"
             "/new_assignment\n"
             "/submissions\n"
+            "/grades_report\n"
+            "/delete_student\n"
+            "/restore_student\n"
             "/menu",
             reply_markup=get_teacher_menu(),
         )
@@ -26,6 +29,7 @@ async def fallback_handler(message: Message) -> None:
         "Команда не распознана.\n\n"
         "Используйте кнопки ниже или команды:\n"
         "/assignments\n"
+        "/grades\n"
         "/menu",
         reply_markup=get_student_menu(),
     )
